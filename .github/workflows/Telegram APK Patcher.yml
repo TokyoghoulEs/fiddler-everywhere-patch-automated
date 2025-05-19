@@ -111,6 +111,11 @@ jobs:
           curl -L -o tgpatcher.py https://raw.githubusercontent.com/AbhiTheModder/termux-scripts/refs/heads/main/tgpatcher.py
           chmod +x tgpatcher.py
         shell: bash
+
+      - name: Parchear tgpatcher.py para evitar input()
+        run: |
+          sed -i "s/.*input(.*'Telegram'.*)/        root_directory = 'Telegram'/" tgpatcher.py
+        shell: bash
       
       - name: Setup Python
         uses: actions/setup-python@v4
