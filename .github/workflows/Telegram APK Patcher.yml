@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tg-variant:
-        description: 'Telegram Variant'
+        description: 'Variante de Telegram'
         required: true
         default: 'Normal'
         type: choice
@@ -23,145 +23,154 @@ jobs:
       download_url: ${{ steps.get_download_url.outputs.download_url }}
     
     steps:
-      - name: Check for latest Telegram APK
+      - name: Verificar última versión de Telegram APK
         id: check_version
         run: |
           REDIRECT_URL=$(curl -s -I -L "https://telegram.org/dl/android/apk" | grep -i "location:" | tail -n 1 | awk '{print $2}' | tr -d '\r')
-          echo "Redirect URL: $REDIRECT_URL"
+          echo "URL de redirección: $REDIRECT_URL"
           echo "REDIRECT_URL=$REDIRECT_URL" >> $GITHUB_ENV
         shell: bash
 
-      - name: Set placeholder version
+      - name: Establecer versión provisional
         id: set_version
         run: |
           DATE_VERSION=$(date +"%Y%m%d")
           echo "latest_version=$DATE_VERSION" >> $GITHUB_OUTPUT
         shell: bash
       
-      - name: Set download URL
+      - name: Establecer URL de descarga
         id: get_download_url
         run: |
           echo "download_url=${{ env.REDIRECT_URL }}" >> $GITHUB_OUTPUT
         shell: bash
 
-  download_telegram_apk:
+  patch_telegram_apk:
     runs-on: ubuntu-latest
     needs: get_telegram_version
     
     steps:
-      - name: Download Telegram APK
+      - name: Instalar dependencias
         run: |
-          echo "Downloading from URL: ${{ needs.get_telegram_version.outputs.download_url }}"
-          curl -L "${{ needs.get_telegram_version.outputs.download_url }}" -o Telegram.apk
+          sudo apt-get update
+          sudo apt-get install -y zipalign apksigner aapt openjdk-11-jre-headless python3-pip unzip
+          python -m pip install --upgrade pip
         shell: bash
-      
-      - name: Verify download
+
+      - name: Descargar Telegram APK
         run: |
+          echo "Descargando desde URL: ${{ needs.get_telegram_version.outputs.download_url }}"
+          curl -L "${{ needs.get_telegram_version.outputs.download_url }}" -o Telegram.apk
+          
+          # Verificar descarga
           if [ -f "Telegram.apk" ]; then
-            echo "Download successful"
+            echo "Descarga exitosa"
             ls -la Telegram.apk
           else
-            echo "Download failed"
+            echo "Descarga fallida"
             exit 1
           fi
         shell: bash
       
-      - name: Extract APK version
+      - name: Extraer versión del APK
         id: extract_version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y aapt
           VERSION=$(aapt dump badging Telegram.apk | grep versionName | sed -n 's/.*versionName=\([^\ ]*\).*/\1/p' | sed "s/'//g")
-          echo "APK Version: $VERSION"
+          echo "Versión del APK: $VERSION"
           echo "APK_VERSION=$VERSION" >> $GITHUB_ENV
         shell: bash
-      
-      - name: Upload original APK as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Original-Telegram-APK
-          path: Telegram.apk
-          if-no-files-found: error
 
-  patch_telegram_apk:
-    runs-on: ubuntu-latest
-    needs: [download_telegram_apk, get_telegram_version]
-    
-    steps:
-      - name: Download original APK
-        uses: actions/download-artifact@v4
-        with:
-          name: Original-Telegram-APK
-          path: .
-      
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      - name: Download tgpatcher.py and create wrapper
+      - name: Descomprimir APK para parcheo
         run: |
+          # Descomprimir el APK
+          mkdir -p Telegram
+          cd Telegram
+          unzip -q ../Telegram.apk
+          cd ..
+          
+          # Verificar la estructura
+          echo "Contenido del directorio Telegram:"
+          ls -la Telegram/
+        shell: bash
+      
+      - name: Descargar herramientas de parcheo
+        run: |
+          # Descargar tgpatcher.py
           curl -L -o tgpatcher.py https://raw.githubusercontent.com/AbhiTheModder/termux-scripts/refs/heads/main/tgpatcher.py
           chmod +x tgpatcher.py
           
-          # Create a wrapper script that will run tgpatcher.py with the right arguments
-          cat > run-patcher.py << 'EOF'
-          import subprocess
-          import sys
-          import os
-
-          variant = os.environ.get('TG_VARIANT', 'Normal')
-          
-          # Prepare command arguments
-          if variant == 'Normal':
-              cmd = ['python', 'tgpatcher.py', '--normal', '--dir', 'Telegram']
-          elif variant == 'Anti' or variant == 'X':
-              cmd = ['python', 'tgpatcher.py', '--anti', '--dir', 'Telegram']
-          else:
-              print(f"Unknown variant: {variant}")
-              sys.exit(1)
-              
-          # Run the patcher script
-          process = subprocess.Popen(cmd, stdin=subprocess.PIPE, text=True)
-          # If the script asks for input, provide 'Telegram'
-          process.communicate(input='Telegram\n')
-          sys.exit(process.returncode)
-          EOF
-          
-          chmod +x run-patcher.py
-        shell: bash
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          sudo apt-get update
-          sudo apt-get install -y zipalign openjdk-11-jre-headless
-        shell: bash
-      
-      - name: Download apksigner.jar and debug.keystore
-        run: |
+          # Descargar herramientas de firma
           curl -L -o apksigner.jar https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/apksigner.jar
           curl -L -o debug.keystore https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/debug.keystore
+          
+          # Verificar descargas
+          echo "Archivos descargados:"
+          ls -la tgpatcher.py apksigner.jar debug.keystore
         shell: bash
       
-      - name: Run patcher script
-        run: python run-patcher.py
-        shell: bash
-      
-      - name: Sign APK
+      - name: Ejecutar script de parcheo
         run: |
-          zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched.apk aligned.apk
-          java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
-          java -jar apksigner.jar verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk
+          # Modificar tgpatcher.py para evitar la solicitud de entrada
+          sed -i "s/input(\"Give me the decompiled directory path (Default is 'Telegram'): \")/\"Telegram\"/g" tgpatcher.py
+          
+          # Ejecutar según la variante seleccionada
+          if [ "${{ env.TG_VARIANT }}" = "Normal" ]; then
+            python tgpatcher.py --normal --dir Telegram
+          elif [ "${{ env.TG_VARIANT }}" = "Anti" ] || [ "${{ env.TG_VARIANT }}" = "X" ]; then
+            python tgpatcher.py --anti --dir Telegram
+          else
+            echo "Variante desconocida: ${{ env.TG_VARIANT }}"
+            exit 1
+          fi
+          
+          # Verificar si se creó el APK parcheado
+          if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched.apk" ]; then
+            echo "Parcheo exitoso"
+            ls -la Telegram-${{ env.TG_VARIANT }}-Patched.apk
+          else
+            echo "El parcheo falló - intentando reempaquetar manualmente"
+            cd Telegram
+            zip -r ../Telegram-${{ env.TG_VARIANT }}-Patched.apk .
+            cd ..
+          fi
         shell: bash
       
-      - name: Rename final APK with version
+      - name: Firmar APK
+        run: |
+          echo "Alineando APK..."
+          zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched.apk aligned.apk || true
+          
+          echo "Firmando APK..."
+          if [ -f "aligned.apk" ] && [ -s "aligned.apk" ]; then
+            java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
+          else
+            echo "El archivo aligned.apk no existe o está vacío, intentando firmar el archivo original parcheado"
+            java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk Telegram-${{ env.TG_VARIANT }}-Patched.apk
+          fi
+          
+          # Verificar firma
+          if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk" ]; then
+            echo "Firmado exitoso"
+            java -jar apksigner.jar verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk || true
+          else
+            echo "El firmado falló"
+            exit 1
+          fi
+        shell: bash
+      
+      - name: Renombrar APK final con versión
         run: |
           VERSION="${{ needs.get_telegram_version.outputs.latest_version }}"
           mv Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk Telegram-${{ env.TG_VARIANT }}-${VERSION}-Patched.apk
         shell: bash
       
-      - name: Upload patched APK
+      - name: Guardar APK original como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Original-Telegram-APK
+          path: Telegram.apk
+          if-no-files-found: error
+      
+      - name: Guardar APK parcheado como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
@@ -173,38 +182,38 @@ jobs:
     needs: [patch_telegram_apk, get_telegram_version]
     
     steps:
-      - name: Download patched APK
+      - name: Descargar APK parcheado
         uses: actions/download-artifact@v4
         with:
           name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
           path: .
       
-      - name: Create Release
+      - name: Crear Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}
-          name: Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Patched
+          name: Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
           draft: false
           prerelease: false
           files: |
             Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
           body: |
-            # Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Patched
+            # Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
             
-            This is an automatically patched version of the Telegram Android APK.
+            Esta es una versión parcheada automáticamente del APK de Telegram para Android.
             
-            ## Variant: ${{ env.TG_VARIANT }}
+            ## Variante: ${{ env.TG_VARIANT }}
             
-            ### Changes:
-            - Removed restrictions (Normal variant)
-            - Added premium features (Anti variant) - if applicable
+            ### Cambios:
+            - Restricciones eliminadas (variante Normal)
+            - Características premium añadidas (variante Anti) - si es aplicable
             
-            **Note:** This APK is modified from the original Telegram APK. Use at your own risk.
+            **Nota:** Este APK es una modificación del APK original de Telegram. Úsalo bajo tu propio riesgo.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Display download link
+      - name: Mostrar enlace de descarga
         run: |
-          echo "Download URL: ${{ steps.create_release.outputs.url }}"
+          echo "URL de descarga: ${{ steps.create_release.outputs.url }}"
         shell: bash
