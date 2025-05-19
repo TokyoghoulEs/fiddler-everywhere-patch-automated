@@ -133,7 +133,14 @@ jobs:
       
       - name: Run patcher script
         run: |
-          python tgpatcher.py Telegram.apk ${{ env.TG_VARIANT }}
+          if [ "${{ env.TG_VARIANT }}" = "Normal" ]; then
+            python tgpatcher.py --normal --dir Telegram
+          elif [ "${{ env.TG_VARIANT }}" = "Anti" ] || [ "${{ env.TG_VARIANT }}" = "X" ]; then
+            python tgpatcher.py --anti --dir Telegram
+          else
+            echo "Variante desconocida: ${{ env.TG_VARIANT }}"
+            exit 1
+          fi
         shell: bash
       
       - name: Sign APK
