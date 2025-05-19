@@ -1,0 +1,208 @@
+name: Telegram APK Patcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      tg-variant:
+        description: 'Telegram Variant'
+        required: true
+        default: 'Standard'
+        type: choice
+        options:
+          - Standard
+          - Plus
+          - X
+
+env:
+  TG_VARIANT: ${{ github.event.inputs.tg-variant }}
+
+jobs:
+  get_telegram_version:
+    runs-on: ubuntu-latest
+    outputs:
+      latest_version: ${{ steps.set_version.outputs.latest_version }}
+      download_url: ${{ steps.get_download_url.outputs.download_url }}
+    
+    steps:
+      - name: Check for latest Telegram APK
+        id: check_version
+        run: |
+          # Use curl to get the redirect URL
+          REDIRECT_URL=$(curl -s -I -L "https://telegram.org/dl/android/apk" | grep -i "location:" | tail -n 1 | awk '{print $2}' | tr -d '\r')
+          echo "Redirect URL: $REDIRECT_URL"
+          
+          # Extract version from filename or URL if possible
+          # Note: Telegram APK URL doesn't directly contain version info, we might need to extract it from the APK later
+          echo "REDIRECT_URL=$REDIRECT_URL" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set placeholder version
+        id: set_version
+        run: |
+          # Set today's date as a version placeholder
+          DATE_VERSION=$(date +"%Y%m%d")
+          echo "latest_version=$DATE_VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      - name: Set download URL
+        id: get_download_url
+        run: |
+          echo "download_url=${{ env.REDIRECT_URL }}" >> $GITHUB_OUTPUT
+        shell: bash
+
+  download_telegram_apk:
+    runs-on: ubuntu-latest
+    needs: get_telegram_version
+    
+    steps:
+      - name: Download Telegram APK
+        run: |
+          echo "Downloading from URL: ${{ needs.get_telegram_version.outputs.download_url }}"
+          curl -L "${{ needs.get_telegram_version.outputs.download_url }}" -o Telegram.apk
+        shell: bash
+      
+      - name: Verify download
+        run: |
+          if [ -f "Telegram.apk" ]; then
+            echo "Download successful"
+            ls -la Telegram.apk
+          else
+            echo "Download failed"
+            exit 1
+          fi
+        shell: bash
+      
+      - name: Extract APK version
+        id: extract_version
+        run: |
+          # Install required tools
+          sudo apt-get update
+          sudo apt-get install -y aapt
+          
+          # Extract version from APK
+          VERSION=$(aapt dump badging Telegram.apk | grep versionName | sed -n 's/.*versionName=\([^\ ]*\).*/\1/p' | sed "s/'//g")
+          echo "APK Version: $VERSION"
+          echo "APK_VERSION=$VERSION" >> $GITHUB_ENV
+        shell: bash
+      
+      - name: Upload original APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Original-Telegram-APK
+          path: Telegram.apk
+          if-no-files-found: error
+
+  setup_patcher_script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Descargar tgpatcher.py
+        run: |
+          curl -L -o tgpatcher.py https://raw.githubusercontent.com/tuusuario/turepo/main/tgpatcher.py
+          chmod +x tgpatcher.py
+        shell: bash
+
+  patch_telegram_apk:
+    runs-on: ubuntu-latest
+    needs: [download_telegram_apk, setup_patcher_script, get_telegram_version]
+    
+    steps:
+      - name: Download original APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Original-Telegram-APK
+          path: .
+      
+      - name: Descargar tgpatcher.py
+        run: |
+          curl -L -o tgpatcher.py https://raw.githubusercontent.com/tuusuario/turepo/main/tgpatcher.py
+          chmod +x tgpatcher.py
+        shell: bash
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install apksigner
+        shell: bash
+      
+      - name: Run patcher script
+        run: |
+          python tgpatcher.py Telegram.apk ${{ env.TG_VARIANT }}
+        shell: bash
+      
+      - name: Sign APK
+        run: |
+          # Generate a debug keystore if it doesn't exist
+          keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android \
+            -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US" || true
+          
+          # Sign the APK
+          zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched.apk aligned.apk
+          apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
+          
+          # Verify signature
+          apksigner verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk
+        shell: bash
+      
+      - name: Rename final APK with version
+        run: |
+          VERSION="${{ needs.get_telegram_version.outputs.latest_version }}"
+          mv Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk Telegram-${{ env.TG_VARIANT }}-${VERSION}-Patched.apk
+        shell: bash
+      
+      - name: Upload patched APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
+          path: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
+          if-no-files-found: error
+
+  create_release:
+    runs-on: ubuntu-latest
+    needs: [patch_telegram_apk, get_telegram_version]
+    
+    steps:
+      - name: Download patched APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
+          path: .
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}
+          name: Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Patched
+          draft: false
+          prerelease: false
+          files: |
+            Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
+          body: |
+            # Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Patched
+            
+            This is an automatically patched version of the Telegram Android APK.
+            
+            ## Variant: ${{ env.TG_VARIANT }}
+            
+            ### Changes:
+            - Removed restrictions (Standard variant)
+            - Added premium features (Plus variant) - if applicable
+            - Added experimental features (X variant) - if applicable
+            
+            **Note:** This APK is modified from the original Telegram APK. Use at your own risk.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Display download link
+        run: |
+          echo "Download URL: ${{ steps.create_release.outputs.url }}"
+        shell: bash
