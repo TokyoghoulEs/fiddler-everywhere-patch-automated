@@ -6,12 +6,11 @@ on:
       tg-variant:
         description: 'Telegram Variant'
         required: true
-        default: 'Standard'
+        default: 'Normal'
         type: choice
         options:
-          - Standard
-          - Plus
-          - X
+          - Normal
+          - Anti
 
 env:
   TG_VARIANT: ${{ github.event.inputs.tg-variant }}
@@ -192,9 +191,8 @@ jobs:
             ## Variant: ${{ env.TG_VARIANT }}
             
             ### Changes:
-            - Removed restrictions (Standard variant)
-            - Added premium features (Plus variant) - if applicable
-            - Added experimental features (X variant) - if applicable
+            - Removed restrictions (Normal variant)
+            - Added premium features (Anti variant) - if applicable
             
             **Note:** This APK is modified from the original Telegram APK. Use at your own risk.
         env:
