@@ -27,19 +27,14 @@ jobs:
       - name: Check for latest Telegram APK
         id: check_version
         run: |
-          # Use curl to get the redirect URL
           REDIRECT_URL=$(curl -s -I -L "https://telegram.org/dl/android/apk" | grep -i "location:" | tail -n 1 | awk '{print $2}' | tr -d '\r')
           echo "Redirect URL: $REDIRECT_URL"
-          
-          # Extract version from filename or URL if possible
-          # Note: Telegram APK URL doesn't directly contain version info, we might need to extract it from the APK later
           echo "REDIRECT_URL=$REDIRECT_URL" >> $GITHUB_ENV
         shell: bash
 
       - name: Set placeholder version
         id: set_version
         run: |
-          # Set today's date as a version placeholder
           DATE_VERSION=$(date +"%Y%m%d")
           echo "latest_version=$DATE_VERSION" >> $GITHUB_OUTPUT
         shell: bash
@@ -75,11 +70,8 @@ jobs:
       - name: Extract APK version
         id: extract_version
         run: |
-          # Install required tools
           sudo apt-get update
           sudo apt-get install -y aapt
-          
-          # Extract version from APK
           VERSION=$(aapt dump badging Telegram.apk | grep versionName | sed -n 's/.*versionName=\([^\ ]*\).*/\1/p' | sed "s/'//g")
           echo "APK Version: $VERSION"
           echo "APK_VERSION=$VERSION" >> $GITHUB_ENV
@@ -126,10 +118,17 @@ jobs:
         with:
           python-version: '3.10'
       
+      - name: Descargar apksigner.jar y debug.keystore
+        run: |
+          curl -L -o apksigner.jar https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/apksigner.jar
+          curl -L -o debug.keystore https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/debug.keystore
+        shell: bash
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install apksigner
+          sudo apt-get update
+          sudo apt-get install -y zipalign openjdk-11-jre-headless
         shell: bash
       
       - name: Run patcher script
@@ -139,17 +138,9 @@ jobs:
       
       - name: Sign APK
         run: |
-          # Generate a debug keystore if it doesn't exist
-          keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android \
-            -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US" || true
-          
-          # Sign the APK
           zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched.apk aligned.apk
-          apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
-          
-          # Verify signature
-          apksigner verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk
+          java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
+          java -jar apksigner.jar verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk
         shell: bash
       
       - name: Rename final APK with version
