@@ -92,7 +92,7 @@ jobs:
       
       - name: Descargar tgpatcher.py
         run: |
-          curl -L -o tgpatcher.py https://raw.githubusercontent.com/tuusuario/turepo/main/tgpatcher.py
+          curl -L -o tgpatcher.py https://raw.githubusercontent.com/AbhiTheModder/termux-scripts/refs/heads/main/tgpatcher.py
           chmod +x tgpatcher.py
         shell: bash
 
@@ -109,7 +109,7 @@ jobs:
       
       - name: Descargar tgpatcher.py
         run: |
-          curl -L -o tgpatcher.py https://raw.githubusercontent.com/tuusuario/turepo/main/tgpatcher.py
+          curl -L -o tgpatcher.py https://raw.githubusercontent.com/AbhiTheModder/termux-scripts/refs/heads/main/tgpatcher.py
           chmod +x tgpatcher.py
         shell: bash
       
