@@ -114,7 +114,7 @@ jobs:
 
       - name: Parchear tgpatcher.py para evitar input()
         run: |
-          sed -i "s/.*input(.*'Telegram'.*)/        root_directory = 'Telegram'/" tgpatcher.py
+          sed -i "s|root_directory = input(\"Give me the decompiled directory path (Default is 'Telegram'): \") or root_directory|root_directory = 'Telegram'|" tgpatcher.py
         shell: bash
       
       - name: Setup Python
