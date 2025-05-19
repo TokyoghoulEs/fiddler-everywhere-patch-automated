@@ -14,6 +14,7 @@ on:
 
 env:
   TG_VARIANT: ${{ github.event.inputs.tg-variant }}
+  APKTOOL_VERSION: 2.11.1
 
 jobs:
   get_telegram_version:
@@ -52,8 +53,23 @@ jobs:
       - name: Instalar dependencias
         run: |
           sudo apt-get update
-          sudo apt-get install -y zipalign apksigner aapt openjdk-11-jre-headless python3-pip unzip
+          sudo apt-get install -y zipalign apksigner aapt openjdk-11-jre-headless python3-pip
           python -m pip install --upgrade pip
+        shell: bash
+
+      - name: Instalar apktool
+        run: |
+          # Descargar la última versión de apktool
+          sudo -E sh -c 'wget https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_${{ env.APKTOOL_VERSION }}.jar -O /usr/local/bin/apktool.jar'
+          sudo chmod +r /usr/local/bin/apktool.jar
+          
+          # Crear script wrapper para apktool
+          echo '#!/bin/bash
+          java -jar /usr/local/bin/apktool.jar "$@"' | sudo tee /usr/local/bin/apktool
+          sudo chmod +x /usr/local/bin/apktool
+          
+          # Verificar instalación
+          apktool --version
         shell: bash
 
       - name: Descargar Telegram APK
@@ -79,17 +95,14 @@ jobs:
           echo "APK_VERSION=$VERSION" >> $GITHUB_ENV
         shell: bash
 
-      - name: Descomprimir APK para parcheo
+      - name: Descompilar APK con apktool
         run: |
-          # Descomprimir el APK
-          mkdir -p Telegram
-          cd Telegram
-          unzip -q ../Telegram.apk
-          cd ..
+          # Descompilar el APK utilizando apktool
+          apktool d -f -o Telegram-decompiled Telegram.apk
           
           # Verificar la estructura
-          echo "Contenido del directorio Telegram:"
-          ls -la Telegram/
+          echo "Contenido del directorio descompilado:"
+          ls -la Telegram-decompiled/
         shell: bash
       
       - name: Descargar herramientas de parcheo
@@ -109,43 +122,42 @@ jobs:
       
       - name: Ejecutar script de parcheo
         run: |
-          # Modificar tgpatcher.py para evitar la solicitud de entrada
-          sed -i "s/input(\"Give me the decompiled directory path (Default is 'Telegram'): \")/\"Telegram\"/g" tgpatcher.py
+          # Modificar tgpatcher.py para usar el directorio descompilado por apktool
+          sed -i "s/input(\"Give me the decompiled directory path (Default is 'Telegram'): \")/\"Telegram-decompiled\"/g" tgpatcher.py
           
           # Ejecutar según la variante seleccionada
           if [ "${{ env.TG_VARIANT }}" = "Normal" ]; then
-            python tgpatcher.py --normal --dir Telegram
+            python tgpatcher.py --normal --dir Telegram-decompiled
           elif [ "${{ env.TG_VARIANT }}" = "Anti" ] || [ "${{ env.TG_VARIANT }}" = "X" ]; then
-            python tgpatcher.py --anti --dir Telegram
+            python tgpatcher.py --anti --dir Telegram-decompiled
           else
             echo "Variante desconocida: ${{ env.TG_VARIANT }}"
             exit 1
           fi
+        shell: bash
+      
+      - name: Recompilar APK con apktool
+        run: |
+          # Recompilar el APK usando apktool
+          apktool b Telegram-decompiled -o Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk
           
-          # Verificar si se creó el APK parcheado
-          if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched.apk" ]; then
-            echo "Parcheo exitoso"
-            ls -la Telegram-${{ env.TG_VARIANT }}-Patched.apk
+          # Verificar si se creó el APK
+          if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk" ]; then
+            echo "Recompilación exitosa"
+            ls -la Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk
           else
-            echo "El parcheo falló - intentando reempaquetar manualmente"
-            cd Telegram
-            zip -r ../Telegram-${{ env.TG_VARIANT }}-Patched.apk .
-            cd ..
+            echo "La recompilación falló"
+            exit 1
           fi
         shell: bash
       
       - name: Firmar APK
         run: |
           echo "Alineando APK..."
-          zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched.apk aligned.apk || true
+          zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk aligned.apk
           
           echo "Firmando APK..."
-          if [ -f "aligned.apk" ] && [ -s "aligned.apk" ]; then
-            java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
-          else
-            echo "El archivo aligned.apk no existe o está vacío, intentando firmar el archivo original parcheado"
-            java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk Telegram-${{ env.TG_VARIANT }}-Patched.apk
-          fi
+          java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
           
           # Verificar firma
           if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk" ]; then
