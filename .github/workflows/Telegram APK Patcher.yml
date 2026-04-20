@@ -60,7 +60,7 @@ jobs:
       - name: Instalar apktool
         run: |
           # Descargar la última versión de apktool
-          sudo -E sh -c 'wget https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_${{ env.APKTOOL_VERSION }}.jar -O /usr/local/bin/apktool.jar'
+          sudo wget https://github.com/iBotPeaches/Apktool/releases/download/v${{ env.APKTOOL_VERSION }}/apktool_${{ env.APKTOOL_VERSION }}.jar -O /usr/local/bin/apktool.jar
           sudo chmod +r /usr/local/bin/apktool.jar
           
           # Crear script wrapper para apktool
