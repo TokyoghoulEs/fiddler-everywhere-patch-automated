@@ -158,7 +158,6 @@ jobs:
                                       in_method = True
                                       new_lines.append(line)
                                       print(f"{GREEN}INFO: {NC}Encontrada declaración del método en línea {i+1}")
-
                               if in_method:
                                   if ".end method" in line and line != lines[i-1]:
                                       new_lines.append("    const/4 v0, 0x1\n")
@@ -294,43 +293,3 @@ jobs:
           name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
           path: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
           if-no-files-found: error
-
-  create_release:
-    runs-on: ubuntu-latest
-    needs: [patch_telegram_apk, get_telegram_version]
-    steps:
-      - name: Descargar APK parcheado
-        uses: actions/download-artifact@v4
-        with:
-          name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
-          path: .
-
-      - name: Crear Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}
-          name: Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
-          draft: false
-          prerelease: false
-          files: |
-            Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
-          body: |
-            # Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
-
-            Esta es una versión parcheada automáticamente del APK de Telegram para Android.
-
-            ## Variante: ${{ env.TG_VARIANT }}
-
-            ### Cambios:
-            - Restricciones eliminadas (variante Normal)
-            - Características premium añadidas (variante Anti) - si es aplicable
-
-            **Nota:** Este APK es una modificación del APK original de Telegram. Úsalo bajo tu propio riesgo.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Mostrar enlace de descarga
-        run: |
-          echo "URL de descarga: ${{ steps.create_release.outputs.url }}"
-        shell: bash
