@@ -22,6 +22,7 @@ jobs:
     outputs:
       latest_version: ${{ steps.set_version.outputs.latest_version }}
       download_url: ${{ steps.get_download_url.outputs.download_url }}
+    
     steps:
       - name: Verificar última versión de Telegram APK
         id: check_version
@@ -37,7 +38,7 @@ jobs:
           DATE_VERSION=$(date +"%Y%m%d")
           echo "latest_version=$DATE_VERSION" >> $GITHUB_OUTPUT
         shell: bash
-
+      
       - name: Establecer URL de descarga
         id: get_download_url
         run: |
@@ -47,6 +48,7 @@ jobs:
   patch_telegram_apk:
     runs-on: ubuntu-latest
     needs: get_telegram_version
+    
     steps:
       - name: Instalar dependencias
         run: |
@@ -57,11 +59,16 @@ jobs:
 
       - name: Instalar apktool
         run: |
-          sudo wget https://github.com/iBotPeaches/Apktool/releases/download/v${{ env.APKTOOL_VERSION }}/apktool_${{ env.APKTOOL_VERSION }}.jar -O /usr/local/bin/apktool.jar
+          # Descargar la última versión de apktool
+          sudo -E sh -c 'wget https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_${{ env.APKTOOL_VERSION }}.jar -O /usr/local/bin/apktool.jar'
           sudo chmod +r /usr/local/bin/apktool.jar
+          
+          # Crear script wrapper para apktool
           echo '#!/bin/bash
           java -jar /usr/local/bin/apktool.jar "$@"' | sudo tee /usr/local/bin/apktool
           sudo chmod +x /usr/local/bin/apktool
+          
+          # Verificar instalación
           apktool --version
         shell: bash
 
@@ -69,6 +76,8 @@ jobs:
         run: |
           echo "Descargando desde URL: ${{ needs.get_telegram_version.outputs.download_url }}"
           curl -L "${{ needs.get_telegram_version.outputs.download_url }}" -o Telegram.apk
+          
+          # Verificar descarga
           if [ -f "Telegram.apk" ]; then
             echo "Descarga exitosa"
             ls -la Telegram.apk
@@ -77,7 +86,7 @@ jobs:
             exit 1
           fi
         shell: bash
-
+      
       - name: Extraer versión del APK
         id: extract_version
         run: |
@@ -88,44 +97,56 @@ jobs:
 
       - name: Descompilar APK con apktool
         run: |
+          # Descompilar el APK utilizando apktool
           apktool d -f -o Telegram-decompiled Telegram.apk
+          
+          # Verificar la estructura
           echo "Contenido del directorio descompilado:"
           ls -la Telegram-decompiled/
         shell: bash
-
+      
       - name: Crear y configurar las herramientas de parcheo
         run: |
+          # Descargar tgpatcher.py
           curl -L -o tgpatcher.py https://raw.githubusercontent.com/AbhiTheModder/termux-scripts/refs/heads/main/tgpatcher.py
           chmod +x tgpatcher.py
+
+          # Descargar herramientas de firma
           curl -L -o apksigner.jar https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/apksigner.jar
           curl -L -o debug.keystore https://github.com/AbhiTheModder/termux-scripts/raw/refs/heads/main/keystore/debug.keystore
 
+          # Crear la función mejorada en un archivo separado
           cat > premium_patcher.py << 'EOF'
           #!/usr/bin/env python3
+
           def find_and_modify_isPremiumFeatureAvailable(root_directory):
               """
-              Encuentra y modifica todos los métodos isPremiumFeatureAvailable
-              en el APK descompilado para que devuelvan siempre true.
+              Encuentra y modifica todos los métodos isPremiumFeatureAvailable en el APK descompilado
+              para que devuelvan siempre true.
               """
               import os
               import re
 
+              # Colores para mensajes en la terminal
               GREEN = "\033[92m"
               YELLOW = "\033[93m"
-              NC = "\033[0m"
+              NC = "\033[0m"  # No Color
 
               methods_found = 0
               files_modified = 0
 
+              # Patrones para buscar el método isPremiumFeatureAvailable
               method_patterns = [
-                  r"\.method (?:private|public|protected)(?: final)? isPremiumFeatureAvailable\(I\)Z",
-                  r"Lorg/telegram/.*->isPremiumFeatureAvailable\(I\)Z"
+                  r"\.method (?:private|public|protected)(?: final)? isPremiumFeatureAvailable\(I\)Z",  # Método declaración
+                  r"Lorg/telegram/.*->isPremiumFeatureAvailable\(I\)Z"  # Referencias al método
               ]
 
+              # Patrón para encontrar archivos smali relevantes
               for root, _, files in os.walk(root_directory):
                   for file in files:
                       if file.endswith(".smali"):
                           file_path = os.path.join(root, file)
+
                           try:
                               with open(file_path, "r", encoding="utf-8") as f:
                                   content = f.read()
@@ -133,6 +154,7 @@ jobs:
                               print(f"{YELLOW}WARN: {NC}Error al leer {file_path}: {e}")
                               continue
 
+                          # Buscar cualquier referencia al método
                           method_match = False
                           for pattern in method_patterns:
                               if re.search(pattern, content):
@@ -145,6 +167,7 @@ jobs:
                           print(f"{GREEN}INFO: {NC}Encontrado método isPremiumFeatureAvailable en {file_path}")
                           methods_found += 1
 
+                          # Modificar el archivo
                           modified = False
                           new_lines = []
                           in_method = False
@@ -153,60 +176,83 @@ jobs:
                               lines = f.readlines()
 
                           for i, line in enumerate(lines):
-                              for pattern in method_patterns[:1]:
+                              # Detectar inicio del método
+                              for pattern in method_patterns[:1]:  # Solo usar el primer patrón para la declaración del método
                                   if re.search(pattern, line):
                                       in_method = True
                                       new_lines.append(line)
                                       print(f"{GREEN}INFO: {NC}Encontrada declaración del método en línea {i+1}")
-                              if in_method:
-                                  if ".end method" in line and line != lines[i-1]:
-                                      new_lines.append("    const/4 v0, 0x1\n")
-                                      new_lines.append("    return v0\n")
-                                      new_lines.append(line)
-                                      in_method = False
-                                      modified = True
-                                      print(f"{GREEN}INFO: {NC}Método modificado para retornar true")
-                                  elif "return" not in line:
-                                      new_lines.append(line)
+                                      break
                               else:
-                                  new_lines.append(line)
+                                  # Si no es el inicio del método, añadir la línea como está
+                                  if not in_method:
+                                      new_lines.append(line)
+                                      continue
 
+                              # Dentro del método
+                              if in_method:
+                                  # Modificar la línea que establece el valor de retorno a false (0x0)
+                                  if "const/4" in line and "0x0" in line:
+                                      new_lines.append(line.replace("const/4 v0, 0x0", "const/4 v0, 0x1").replace("const/4 v1, 0x0", "const/4 v1, 0x1"))
+                                      modified = True
+                                      print(f"{GREEN}INFO: {NC}Modificada línea {i+1}: {line.strip()} -> const/4 vX, 0x1")
+                                  else:
+                                      new_lines.append(line)
+
+                                  # Detectar fin del método
+                                  if ".end method" in line:
+                                      in_method = False
+
+                          # Guardar cambios si se modificó algo
                           if modified:
                               with open(file_path, "w", encoding="utf-8") as f:
                                   f.writelines(new_lines)
                               files_modified += 1
                               print(f"{GREEN}INFO: {NC}Archivo {file_path} modificado con éxito")
 
+              # Búsqueda adicional para modificar invocaciones directas
               for root, _, files in os.walk(root_directory):
                   for file in files:
                       if file.endswith(".smali"):
                           file_path = os.path.join(root, file)
+
                           try:
                               with open(file_path, "r", encoding="utf-8") as f:
                                   content = f.read()
                           except Exception as e:
                               continue
 
+                          # Buscar invoke-direct o invoke-virtual al método
                           if "invoke-" in content and "isPremiumFeatureAvailable(I)Z" in content:
+                              # Buscar el patrón de uso del resultado (normalmente if-eqz o if-nez después de la invocación)
                               lines = content.split('\n')
                               modified = False
                               new_lines = []
+
                               i = 0
                               while i < len(lines):
                                   line = lines[i]
                                   new_lines.append(line)
+
+                                  # Si encuentra una invocación a isPremiumFeatureAvailable
                                   if "invoke-" in line and "isPremiumFeatureAvailable(I)Z" in line:
                                       print(f"{GREEN}INFO: {NC}Encontrada invocación a isPremiumFeatureAvailable en {file_path}")
+
+                                      # Obtener el registro de resultado
                                       result_reg_match = re.search(r"move-result[^ ]* (v\d+)", lines[i+1] if i+1 < len(lines) else "")
                                       if result_reg_match:
                                           result_reg = result_reg_match.group(1)
+
+                                          # Reemplazar move-result con const/4 v{reg}, 0x1
                                           if i+1 < len(lines):
                                               new_lines.append(f"    const/4 {result_reg}, 0x1")
-                                              i += 1
+                                              i += 1  # Saltar la línea original de move-result
                                               modified = True
                                               print(f"{GREEN}INFO: {NC}Reemplazada línea move-result por const/4 {result_reg}, 0x1")
+
                                   i += 1
 
+                              # Guardar cambios si se modificó algo
                               if modified:
                                   with open(file_path, "w", encoding="utf-8") as f:
                                       f.write("\n".join(new_lines))
@@ -221,17 +267,28 @@ jobs:
                   return False
           EOF
 
+          # Hacer el archivo ejecutable
           chmod +x premium_patcher.py
+
+          # Modificar tgpatcher.py para usar nuestra función en lugar de la original
+          # Primero, importar nuestra función
           echo "from premium_patcher import find_and_modify_isPremiumFeatureAvailable" | cat - tgpatcher.py > temp && mv temp tgpatcher.py
+
+          # Ahora reemplazar las llamadas a las funciones originales con nuestra función
           sed -i 's/automate_method_modification(root_directory, "private isPremiumFeatureAvailable(I)Z", modify_isPremiumFeatureAvailable_method)/find_and_modify_isPremiumFeatureAvailable(root_directory)/g' tgpatcher.py
           sed -i 's/or automate_method_modification(root_directory, "public final isPremiumFeatureAvailable(I)Z", modify_isPremiumFeatureAvailable_method)/# Removed redundant call/g' tgpatcher.py
+
+          # Modificar tgpatcher.py para usar el directorio descompilado por apktool
           sed -i "s/input(\"Give me the decompiled directory path (Default is 'Telegram'): \")/\"Telegram-decompiled\"/g" tgpatcher.py
+
+          # Verificar descargas
           echo "Archivos modificados:"
           ls -la tgpatcher.py apksigner.jar debug.keystore premium_patcher.py
         shell: bash
-
+      
       - name: Ejecutar script de parcheo
         run: |
+          # Ejecutar según la variante seleccionada
           if [ "${{ env.TG_VARIANT }}" = "Normal" ]; then
             python tgpatcher.py --normal --dir Telegram-decompiled
           elif [ "${{ env.TG_VARIANT }}" = "Anti" ] || [ "${{ env.TG_VARIANT }}" = "X" ]; then
@@ -241,10 +298,13 @@ jobs:
             exit 1
           fi
         shell: bash
-
+      
       - name: Recompilar APK con apktool
         run: |
+          # Recompilar el APK usando apktool
           apktool b Telegram-decompiled -o Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk
+          
+          # Verificar si se creó el APK
           if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk" ]; then
             echo "Recompilación exitosa"
             ls -la Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk
@@ -253,18 +313,16 @@ jobs:
             exit 1
           fi
         shell: bash
-
+      
       - name: Firmar APK
         run: |
           echo "Alineando APK..."
           zipalign -p -f -v 4 Telegram-${{ env.TG_VARIANT }}-Patched-Unsigned.apk aligned.apk
+          
           echo "Firmando APK..."
-          java -jar apksigner.jar sign \
-            --ks debug.keystore \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk \
-            aligned.apk
+          java -jar apksigner.jar sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk aligned.apk
+          
+          # Verificar firma
           if [ -f "Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk" ]; then
             echo "Firmado exitoso"
             java -jar apksigner.jar verify --verbose Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk || true
@@ -273,23 +331,64 @@ jobs:
             exit 1
           fi
         shell: bash
-
+      
       - name: Renombrar APK final con versión
         run: |
           VERSION="${{ needs.get_telegram_version.outputs.latest_version }}"
           mv Telegram-${{ env.TG_VARIANT }}-Patched-Signed.apk Telegram-${{ env.TG_VARIANT }}-${VERSION}-Patched.apk
         shell: bash
-
+      
       - name: Guardar APK original como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: Original-Telegram-APK
           path: Telegram.apk
           if-no-files-found: error
-
+      
       - name: Guardar APK parcheado como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
           path: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
           if-no-files-found: error
+
+  create_release:
+    runs-on: ubuntu-latest
+    needs: [patch_telegram_apk, get_telegram_version]
+    
+    steps:
+      - name: Descargar APK parcheado
+        uses: actions/download-artifact@v4
+        with:
+          name: Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched
+          path: .
+      
+      - name: Crear Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}
+          name: Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
+          draft: false
+          prerelease: false
+          files: |
+            Telegram-${{ env.TG_VARIANT }}-${{ needs.get_telegram_version.outputs.latest_version }}-Patched.apk
+          body: |
+            # Telegram ${{ env.TG_VARIANT }} ${{ needs.get_telegram_version.outputs.latest_version }} Parcheado
+            
+            Esta es una versión parcheada automáticamente del APK de Telegram para Android.
+            
+            ## Variante: ${{ env.TG_VARIANT }}
+            
+            ### Cambios:
+            - Restricciones eliminadas (variante Normal)
+            - Características premium añadidas (variante Anti) - si es aplicable
+            
+            **Nota:** Este APK es una modificación del APK original de Telegram. Úsalo bajo tu propio riesgo.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Mostrar enlace de descarga
+        run: |
+          echo "URL de descarga: ${{ steps.create_release.outputs.url }}"
+        shell: bash
